@@ -77,11 +77,23 @@ Run a smoke benchmark suite (JSON output):
 uv run python bench/run.py --suite smoke --out results.json
 ```
 
-Profile a kernel (Nsight Compute):
+Run a standalone benchmark:
 
 ```bash
-ncu --set full -o profiles/copy_transpose_profile \
-  uv run python -m forge_cute_py.env_check
+uv run python bench/benchmark_copy_transpose.py --tile-size 16
+```
+
+Profile a kernel with helper script:
+
+```bash
+./scripts/profile.sh ncu -- uv run python bench/benchmark_copy_transpose.py
+./scripts/profile.sh nsys -- uv run pytest tests/test_copy_transpose.py -k "tile_size=16"
+```
+
+Or use profiling tools directly:
+
+```bash
+ncu --set full -o profiles/copy_transpose uv run python bench/benchmark_copy_transpose.py
 ```
 
 ---
@@ -110,6 +122,38 @@ ncu --set full -o profiles/copy_transpose_profile \
   Benchmark CLI, suites, and JSON reporting.
 * `scripts/`
   Profiling and sanitizer runners (`ncu`, `nsys`, compute-sanitizer).
+
+---
+
+## Quick Reference
+
+### Setup and Validation
+```bash
+uv sync                                    # Install dependencies
+uv run python -m forge_cute_py.env_check  # Verify CUDA/PyTorch setup
+```
+
+### Testing
+```bash
+uv run pytest -q                                      # Run all tests
+uv run pytest tests/test_copy_transpose.py            # Run specific test file
+uv run pytest -k "float16 and tile_size=16"           # Run filtered tests
+uv run pre-commit run --all-files                     # Run linting/formatting
+```
+
+### Benchmarking
+```bash
+uv run python bench/run.py --suite smoke              # Run benchmark suite
+uv run python bench/run.py --suite smoke --out out.json  # Save results
+uv run python bench/benchmark_copy_transpose.py       # Standalone benchmark
+```
+
+### Profiling
+```bash
+./scripts/profile.sh ncu -- uv run python bench/benchmark_copy_transpose.py  # Nsight Compute
+./scripts/profile.sh nsys -- uv run pytest tests/test_copy_transpose.py      # Nsight Systems
+./scripts/profile.sh sanitizer -- uv run python -m forge_cute_py.env_check   # Memory check
+```
 
 ---
 
