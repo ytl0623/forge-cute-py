@@ -2,14 +2,13 @@ import torch
 
 
 @torch.library.custom_op("forge_cute_py::_reduce_sum", mutates_args={"out"})
-def _reduce_sum(x: torch.Tensor, out: torch.Tensor, dim: int = -1, variant: str = "shfl") -> None:
+def _reduce_sum(x: torch.Tensor, out: torch.Tensor, dim: int = -1) -> None:
     """Row/column sum reduction (reference implementation stub).
 
     Args:
         x: Input tensor of shape (M, N)
         out: Output tensor (mutated in-place)
         dim: Dimension to reduce over (-1, 0, or 1)
-        variant: Reduction variant (naive, improved, shfl) - currently unused
     """
     assert x.dim() == 2, "reduce_sum expects a 2D tensor"
     assert x.is_cuda, f"reduce_sum is CUDA-only, got device={x.device}"
@@ -20,6 +19,8 @@ def _reduce_sum(x: torch.Tensor, out: torch.Tensor, dim: int = -1, variant: str 
 
     # Normalize dim to positive index
     dim = dim if dim >= 0 else x.ndim + dim
+    if dim != 1:
+        raise ValueError(f"reduce_sum supports dim in {{-1, 1}} (row-wise), got {dim}")
 
     # For now, use reference implementation
     # Future: call kernel implementation based on variant when available
@@ -32,13 +33,12 @@ def _reduce_sum(x: torch.Tensor, out: torch.Tensor, dim: int = -1, variant: str 
 _reduce_sum.compile_cache = {}
 
 
-def reduce_sum(x: torch.Tensor, dim: int = -1, variant: str = "shfl") -> torch.Tensor:
+def reduce_sum(x: torch.Tensor, dim: int = -1) -> torch.Tensor:
     """Row/column sum reduction.
 
     Args:
         x: Input tensor of shape (M, N)
-        dim: Dimension to reduce over (-1 for last dim, 0 or 1)
-        variant: Reduction variant (naive, improved, shfl) - currently unused
+        dim: Dimension to reduce over (-1 for last dim, or 1)
 
     Returns:
         Reduced tensor of shape (M,) if dim=1 or (N,) if dim=0
@@ -52,14 +52,11 @@ def reduce_sum(x: torch.Tensor, dim: int = -1, variant: str = "shfl") -> torch.T
     # Normalize dim to positive index
     dim = dim if dim >= 0 else x.ndim + dim
 
-    # Determine output shape
-    if dim == 0:
-        out_shape = (x.shape[1],)
-    elif dim == 1:
-        out_shape = (x.shape[0],)
-    else:
-        raise ValueError(f"Invalid dim={dim} for 2D tensor")
+    if dim != 1:
+        raise ValueError(f"Invalid dim={dim} for row-wise reduce_sum")
+
+    out_shape = (x.shape[0],)
 
     out = torch.empty(out_shape, dtype=x.dtype, device=x.device)
-    _reduce_sum(x, out, dim, variant)
+    _reduce_sum(x, out, dim)
     return out

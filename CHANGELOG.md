@@ -23,11 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reference implementations for all Week 0-2 operations
 - Comprehensive test suite with PyTorch reference validation
 - Environment check utility (`forge_cute_py.env_check`)
-- Documentation: README, DEVELOPMENT.md (#11), CLAUDE.md, CONTRIBUTING.md with contribution policy (#7)
+- Documentation: README, DEVELOPMENT.md (#11), CONTRIBUTING.md with contribution policy (#7)
 - Pre-commit hooks installation instructions in CONTRIBUTING.md (#7)
 - Support for float16, bfloat16, and float32 dtypes
+- `FORGE_SOFTMAX_IMPL` softmax mode selection (`auto`, `ref`, `kernel`)
 
 ### Changed
+- Modal benchmarks now use strict GPU matching (`!` suffix) for consistent hardware
 - **BREAKING:** Renamed `tile` parameter to `tile_size` in `copy_transpose` API (#5)
 - Modernized all ops to use two-function pattern: internal `_op_name` (mutates output) and public `op_name` (allocates + returns) (#12)
 - Updated `env_check` to use public API instead of `torch.ops` for testing
@@ -36,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced error messages with device information for better debugging
 - Set tolerance to 0 (exact comparison) for transpose correctness tests
 - Updated documentation to reflect current three-layer architecture and modern PyTorch patterns
+- Added `--impl` to `bench/benchmark_online_softmax.py` and updated benchmark handling for strict kernel mode
 
 ### Infrastructure
 - Package scaffolding with `pyproject.toml` and proper Python 3.13+ support
