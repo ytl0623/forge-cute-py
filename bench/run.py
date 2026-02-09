@@ -46,7 +46,7 @@ def _estimate_bytes(op: str, shape, dtype: torch.dtype, dim=None):
     numel = 1
     for dim_size in shape:
         numel *= dim_size
-    if op == "reduce_sum" and dim is not None:
+    if op in ("reduce_sum", "reduce") and dim is not None:
         out_numel = numel // shape[dim]
         return (numel + out_numel) * elem_size
     return 2 * numel * elem_size
@@ -84,38 +84,10 @@ def _bench_case(case, warmup: int, iterations: int):
         if not hasattr(ops, "reduce_sum"):
             return {"status": "skipped", "reason": "reduce_sum not available"}
         dim = case.get("dim", -1)
-        variant = case.get("variant", "shfl")
         x = torch.randn(*shape, device="cuda", dtype=dtype)
 
         def fn():
-            return ops.reduce_sum(x, dim=dim, variant=variant)
-
-        try:
-            times = do_bench(fn, warmup=warmup, rep=iterations)
-        except NotImplementedError:
-            return {"status": "skipped", "reason": f"variant {variant} not implemented"}
-        stats = summarize_times(times)
-        bytes_moved = _estimate_bytes(op_name, shape, dtype, dim=dim)
-        bw = estimate_bandwidth(bytes_moved, stats["p50_ms"])
-        return {
-            "status": "ok",
-            "op": op_name,
-            "shape": shape,
-            "dtype": str(dtype).replace("torch.", ""),
-            "dim": dim,
-            "variant": variant,
-            "times_ms": stats,
-            "bandwidth_gbps": bw,
-        }
-
-    if op_name == "softmax_online":
-        if not hasattr(ops, "softmax_online"):
-            return {"status": "skipped", "reason": "softmax_online not available"}
-        dim = case.get("dim", -1)
-        x = torch.randn(*shape, device="cuda", dtype=dtype)
-
-        def fn():
-            return ops.softmax_online(x, dim=dim)
+            return ops.reduce_sum(x, dim=dim)
 
         times = do_bench(fn, warmup=warmup, rep=iterations)
         stats = summarize_times(times)
@@ -131,13 +103,147 @@ def _bench_case(case, warmup: int, iterations: int):
             "bandwidth_gbps": bw,
         }
 
+    if op_name == "reduce":
+        if not hasattr(ops, "reduce"):
+            return {"status": "skipped", "reason": "reduce not available"}
+        dim = case.get("dim", -1)
+        reduce_op = case.get("reduce_op", "sum")
+        x = torch.randn(*shape, device="cuda", dtype=dtype)
+
+        def fn():
+            return ops.reduce(x, dim=dim, op=reduce_op)
+
+        times = do_bench(fn, warmup=warmup, rep=iterations)
+        stats = summarize_times(times)
+        bytes_moved = _estimate_bytes(op_name, shape, dtype, dim=dim)
+        bw = estimate_bandwidth(bytes_moved, stats["p50_ms"])
+        return {
+            "status": "ok",
+            "op": op_name,
+            "shape": shape,
+            "dtype": str(dtype).replace("torch.", ""),
+            "dim": dim,
+            "reduce_op": reduce_op,
+            "times_ms": stats,
+            "bandwidth_gbps": bw,
+        }
+
+    if op_name == "softmax_online":
+        if not hasattr(ops, "softmax_online"):
+            return {"status": "skipped", "reason": "softmax_online not available"}
+        dim = case.get("dim", -1)
+        x = torch.randn(*shape, device="cuda", dtype=dtype)
+
+        def fn():
+            return ops.softmax_online(x, dim=dim)
+
+        try:
+            times = do_bench(fn, warmup=warmup, rep=iterations)
+            stats = summarize_times(times)
+            bytes_moved = _estimate_bytes(op_name, shape, dtype, dim=dim)
+            bw = estimate_bandwidth(bytes_moved, stats["p50_ms"])
+        except NotImplementedError as exc:
+            return {
+                "status": "skipped",
+                "op": op_name,
+                "shape": shape,
+                "dtype": str(dtype).replace("torch.", ""),
+                "dim": dim,
+                "reason": str(exc),
+            }
+        except Exception as exc:
+            backend = (
+                ops.get_softmax_online_backend()
+                if hasattr(ops, "get_softmax_online_backend")
+                else "unknown"
+            )
+            return {
+                "status": "skipped",
+                "op": op_name,
+                "shape": shape,
+                "dtype": str(dtype).replace("torch.", ""),
+                "dim": dim,
+                "reason": f"softmax_online failed (backend={backend}): {exc}",
+            }
+        return {
+            "status": "ok",
+            "op": op_name,
+            "shape": shape,
+            "dtype": str(dtype).replace("torch.", ""),
+            "dim": dim,
+            "times_ms": stats,
+            "bandwidth_gbps": bw,
+        }
+
     return {"status": "skipped", "reason": f"unknown op {op_name}"}
+
+
+def _format_shape(shape) -> str:
+    if not shape:
+        return "-"
+    return "x".join(str(dim) for dim in shape)
+
+
+def _fmt_num(val, fmt: str) -> str:
+    if val is None:
+        return "-"
+    if isinstance(val, (int, float)):
+        return format(val, fmt)
+    return str(val)
+
+
+def _print_table(results):
+    rows = []
+    for case in results.get("cases", []):
+        status = case.get("status", "")
+        if status != "ok":
+            rows.append(
+                {
+                    "op": case.get("op", "-"),
+                    "shape": _format_shape(case.get("shape", [])),
+                    "dtype": case.get("dtype", "-"),
+                    "dim": case.get("dim", "-"),
+                    "tile": case.get("tile_size", "-"),
+                    "p50_ms": "-",
+                    "bw": "-",
+                    "note": case.get("reason", "skipped"),
+                }
+            )
+            continue
+
+        times = case.get("times_ms", {})
+        rows.append(
+            {
+                "op": case.get("op", "-"),
+                "shape": _format_shape(case.get("shape", [])),
+                "dtype": case.get("dtype", "-"),
+                "dim": case.get("dim", "-"),
+                "tile": case.get("tile_size", "-"),
+                "p50_ms": _fmt_num(times.get("p50_ms"), "0.4f"),
+                "bw": _fmt_num(case.get("bandwidth_gbps"), "0.2f"),
+                "note": "",
+            }
+        )
+
+    header = (
+        f"{'op':<14} {'shape':<12} {'dtype':<8} {'dim':>4} {'tile':>4} "
+        f"{'p50 (ms)':>10} {'GB/s':>8}  {'note'}"
+    )
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        print(
+            f"{row['op']:<14} {row['shape']:<12} {row['dtype']:<8} "
+            f"{str(row['dim']):>4} {str(row['tile']):>4} {row['p50_ms']:>10} "
+            f"{row['bw']:>8}  {row['note']}"
+        )
 
 
 def main():
     parser = argparse.ArgumentParser(description="forge-cute-py benchmark runner")
     parser.add_argument("--suite", default="smoke")
     parser.add_argument("--out", default=None)
+    parser.add_argument("--op", default=None, help="Filter cases by op name")
     parser.add_argument("--suites", default=str(Path(__file__).parent / "suites.yaml"))
     args = parser.parse_args()
 
@@ -150,6 +256,10 @@ def main():
     warmup = int(suite.get("warmup", 10))
     iterations = int(suite.get("iterations", 50))
     cases = suite.get("cases", [])
+    if args.op:
+        cases = [case for case in cases if case.get("op") == args.op]
+        if not cases:
+            raise ValueError(f"No cases for op={args.op} in suite {args.suite}")
 
     results = {
         "suite": args.suite,
@@ -167,6 +277,9 @@ def main():
         out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     else:
         print(json.dumps(results, indent=2))
+
+    print()
+    _print_table(results)
 
 
 if __name__ == "__main__":

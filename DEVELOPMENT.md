@@ -31,7 +31,7 @@ pattern:
 2. **Public API** (`op_name`): Allocates output tensor, calls internal op, returns
    result. For ops with autograd, wraps a `torch.autograd.Function`.
 
-This enables usage via both `forge_cute_py.op_name()` and
+This enables usage via both `forge_cute_py.ops.op_name()` and
 `torch.ops.forge_cute_py._op_name()`.
 
 ### Current implementation status (v0.1)
@@ -39,8 +39,9 @@ This enables usage via both `forge_cute_py.op_name()` and
 | Op | Kernel | Status |
 |----|--------|--------|
 | `copy_transpose` | CuTe DSL | Fully implemented with tile-based shared memory |
-| `reduce_sum` | Reference | Stub using PyTorch reference (kernel TODO) |
-| `softmax_online` | Reference | Stub with autograd support (kernel TODO) |
+| `reduce` | CuTe DSL | Implemented for sum with benchmark coverage |
+| `reduce_sum` | Reference | Stub/reference path with benchmark coverage |
+| `softmax_online` | Reference + CuTe backend | Backend-registry flow (`ref` default, `kernel` optional); row-wise `dim=-1` only |
 
 ### Development flow
 
@@ -126,7 +127,31 @@ non-zero tolerance in tests.
 ```bash
 uv run python bench/run.py --suite smoke
 uv run python bench/benchmark_copy_transpose.py --tile-size 16
+uv run python bench/benchmark_reduce.py
+uv run python bench/benchmark_online_softmax.py --backend ref
+uv run python bench/benchmark_online_softmax.py --backend kernel
+modal run bench/modal_bench.py --suite smoke --out results.json
+modal run bench/modal_bench.py --suite smoke --op reduce_sum --out results.json
 ```
+
+`softmax_online` backend selection is controlled by:
+- Python API: `set_softmax_online_backend("ref")` / `set_softmax_online_backend("kernel")`
+- Benchmark CLI: `bench/benchmark_online_softmax.py --backend {ref,kernel}`
+
+Current `softmax_online` constraints:
+- Input is 2D CUDA tensor
+- Dtype in `float16`, `bfloat16`, `float32`
+- `dim=-1` only
+
+> **Warning:** Modal benchmarks incur GPU costs. Review `bench/modal_bench.py`
+> and verify timeout/GPU settings before running. Start with `--suite smoke`
+> to validate your setup. You are responsible for any credits consumed.
+
+Modal benchmarks run on B200 GPUs using CUDA 13.1 and PyTorch 2.9.1.
+
+Modal GPU types and CLI usage:
+https://modal.com/docs/guide/gpu
+https://modal.com/docs/reference/cli/run
 
 Add new benchmark cases to `bench/suites.yaml` and keep outputs reproducible.
 

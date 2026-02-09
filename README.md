@@ -1,6 +1,6 @@
 `forge-cute-py` is a project for developing and evaluating **CuTe DSL** kernels in Python.
 
-As initially planned, it should provides a workflow to **run kernels, validate correctness against PyTorch references, benchmark performance, and profile**.
+As initially planned, it provides a workflow to **run kernels, validate correctness against PyTorch references, benchmark performance, and profile**.
 
 ## Current scope (v0.1)
 
@@ -30,7 +30,7 @@ Not currently in scope for v0: FlashAttention kernels (FA1+), decode/KV-cache, F
 
 ```bash
 uv sync
-````
+```
 
 If you need an editable/dev install, use your normal `uv` workflow (project is expected to be runnable via `uv run ...`).
 
@@ -84,6 +84,8 @@ Run a standalone benchmark:
 
 ```bash
 uv run python bench/benchmark_copy_transpose.py --tile-size 16
+uv run python bench/benchmark_online_softmax.py --backend ref
+uv run python bench/benchmark_online_softmax.py --backend kernel
 ```
 
 Profile a kernel with helper script:
@@ -106,8 +108,9 @@ ncu --set full -o profiles/copy_transpose uv run python bench/benchmark_copy_tra
 | Op | Status | Variants | Notes |
 | --- | --- | --- | --- |
 | copy_transpose | Implemented | tile_size=16/32 | CuTe DSL kernel with tiled shared memory |
-| reduce_sum | Stub (ref) | naive/improved/shfl | Uses PyTorch reference; kernel to be implemented |
-| softmax_online | Stub (ref) | single-pass | Uses PyTorch reference with autograd support; kernel to be implemented |
+| reduce | Implemented (sum only) | - | CuTe kernel with benchmark coverage |
+| reduce_sum | Stub (ref) | - | Reference path with benchmark coverage |
+| softmax_online | Implemented (registry) | ref, kernel | Default backend is `ref`; `kernel` is available for contributor benchmarking and remains non-production |
 
 ---
 
@@ -149,7 +152,31 @@ uv run pre-commit run --all-files                     # Run linting/formatting
 uv run python bench/run.py --suite smoke              # Run benchmark suite
 uv run python bench/run.py --suite smoke --out out.json  # Save results
 uv run python bench/benchmark_copy_transpose.py       # Standalone benchmark
+uv run python bench/benchmark_reduce.py               # Standalone benchmark
+uv run python bench/benchmark_online_softmax.py --backend ref     # softmax fwd+bwd on reference backend
+uv run python bench/benchmark_online_softmax.py --backend kernel  # softmax fwd+bwd on CuTe kernel backend
+modal run bench/modal_bench.py --suite smoke --out results.json  # Remote run on B200 via Modal
 ```
+
+`softmax_online` backend selection is controlled via Python API or benchmark CLI:
+- Python API: `set_softmax_online_backend("ref")` or `set_softmax_online_backend("kernel")`
+- Benchmark CLI: `bench/benchmark_online_softmax.py --backend {ref,kernel}`
+
+Current softmax contract:
+- supported tensors: 2D CUDA
+- supported dtypes: `float16`, `bfloat16`, `float32`
+- supported dim: `dim=-1` (row-wise only)
+
+### Modal setup (remote benchmarks)
+```bash
+uv pip install modal
+modal token new
+modal run bench/modal_bench.py --suite smoke --out results.json
+modal run bench/modal_bench.py --suite smoke --op reduce_sum --out results.json
+```
+
+Modal benchmarks run on B200 GPUs using CUDA 13.1 and PyTorch 2.9.1.
+See https://modal.com/docs/guide/gpu for more info.
 
 ### Profiling
 ```bash
